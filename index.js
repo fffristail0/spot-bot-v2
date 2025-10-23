@@ -13,6 +13,7 @@ const stage = new Scenes.Stage([addSpotWizard]);
 bot.use(session());
 bot.use(stage.middleware());
 
+
 // Подключаем команды
 bot.start(startCommand);
 bot.command('add', addCommand);
