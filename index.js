@@ -4,6 +4,7 @@ const addSpotWizard = require('./scenes/addSpotWizard/addSpotWizard');
 const startCommand = require('./commands/start');
 const addCommand = require('./commands/add');
 const listCommand = require('./commands/list');
+const shareCommand = require('./commands/share');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
@@ -18,6 +19,7 @@ bot.use(stage.middleware());
 bot.start(startCommand);
 bot.command('add', addCommand);
 bot.command('list', listCommand);
+bot.command('share', shareCommand);
 
 bot.launch();
 console.log('✅ Бот запущен!');

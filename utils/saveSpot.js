@@ -9,13 +9,16 @@ async function saveSpot(ctx, photoUrl, gps, regionData) {
       photoUrl,
       username: ctx.from.username || ctx.from.first_name || 'unknown',
       userId: ctx.from.id,
-      coordinates: gps,
+      ownerId: ctx.from.id,
+      createdAt: Date.now(),
+      coordinates: gps ? { lat: gps.lat, lon: gps.lon } : null,
       geoKey,
-      region: regionData?.region || null,
-      city: regionData?.city || null
+      region: regionData ? (regionData.region || null) : null,
+      city: regionData ? (regionData.city || null) : null
     };
   
-    await addSpot(spotData);
-  }
-  
-  module.exports = {saveSpot}
+    const key = await addSpot(spotData);
+    return key;
+}
+
+module.exports = { saveSpot };
