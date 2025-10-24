@@ -5,6 +5,8 @@ const shareWizard = require('./scenes/shareWizard/shareWizard');
 const startCommand = require('./commands/start');
 const addCommand = require('./commands/add');
 const listCommand = require('./commands/list');
+const mapCommand = require('./commands/map');
+const helpCommand = require('./commands/help')
 const shareAction = require('./actions/share');
 const delAction = require('./actions/del');
 const delcAction = require('./actions/delc');
@@ -24,7 +26,9 @@ bot.use(stage.middleware());
 bot.telegram.setMyCommands([
   { command: 'start', description: 'Начать' },
   { command: 'add', description: 'Добавить спот' },
-  { command: 'list', description: 'Мои споты' }
+  { command: 'list', description: 'Мои споты' },
+  { command: 'map', description: 'Открыть все споты на карте' },
+  { command: 'help', description: 'Показать справку' }
 ]);
 
 bot.catch((err, ctx) => {
@@ -35,6 +39,8 @@ bot.catch((err, ctx) => {
 bot.start(startCommand);
 bot.command('add', addCommand);
 bot.command('list', listCommand);
+bot.command('map', mapCommand);
+bot.command('help', helpCommand);
 bot.action(/^share:(.+)$/, shareAction);
 bot.action(/^del:(.+)$/, delAction);
 bot.action(/^delc:(.+)$/, delcAction);

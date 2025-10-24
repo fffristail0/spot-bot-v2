@@ -53,4 +53,30 @@ async function deleteFileByKey(key) {
   }
 }
 
-module.exports = { uploadFile, deleteFileByKey };
+function publicUrlForKey(key) {
+  const Bucket = process.env.YANDEX_BUCKET;
+  const Key = sanitizeKey(key);
+  return `https://storage.yandexcloud.net/${Bucket}/${Key}`;
+}
+
+// Публичная загрузка (перезаписывает объект по ключу, URL постоянный)
+async function uploadPublicFile(key, data, opts = {}) {
+  const Bucket = process.env.YANDEX_BUCKET;
+  const Key = sanitizeKey(key);
+  const ContentType = opts.contentType || mime.lookup(Key) || 'application/octet-stream';
+  const CacheControl = opts.cacheControl; // например, 'no-cache' для KML
+
+  const cmd = new PutObjectCommand({
+    Bucket,
+    Key,
+    Body: data,
+    ContentType,
+    CacheControl,
+    ACL: 'public-read' // если бакет уже публичен политикой, это не навредит
+  });
+  await s3.send(cmd);
+
+  return publicUrlForKey(Key);
+}
+
+module.exports = { uploadFile, deleteFileByKey, uploadPublicFile, publicUrlForKey };
