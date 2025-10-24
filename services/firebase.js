@@ -1,59 +1,91 @@
-const admin = require('firebase-admin');
-const serviceAccount = require('../firebase-key.json');
+﻿const admin = require('firebase-admin');
 require('dotenv').config();
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    databaseURL: process.env.FIREBASE_DB_URL
-  });
+function initFirebase() {
+  if (admin.apps.length) return;
+  const databaseURL = process.env.FIREBASE_DB_URL;
+  if (!databaseURL) {
+    console.error('ENV ERROR: FIREBASE_DB_URL is required');
+    process.exit(1);
+  }
+
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+    const json = JSON.parse(Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString('utf8'));
+    admin.initializeApp({ credential: admin.credential.cert(json), databaseURL });
+  } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    admin.initializeApp({ credential: admin.credential.applicationDefault(), databaseURL });
+  } else {
+    try {
+      const serviceAccount = require('../firebase-key.json');
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount), databaseURL });
+    } catch (e) {
+      console.error('No Firebase credentials provided. Set GOOGLE_APPLICATION_CREDENTIALS or FIREBASE_SERVICE_ACCOUNT_BASE64');
+      process.exit(1);
+    }
+  }
 }
+initFirebase();
 
 const db = admin.database();
+const TS = admin.database.ServerValue.TIMESTAMP;
 
-// Добавление спота. Устанавливаем ownerId = userId (для обратной совместимости)
-async function addSpot(spot) {
+async function registerUser(userId, username) {
+  const uid = String(userId);
+  const updates = {
+    [`users/${uid}`]: { username: username || null, updatedAt: Date.now() }
+  };
+  if (username) {
+    updates[`usernames/${String(username).toLowerCase()}`] = uid;
+  }
+  await db.ref().update(updates);
+}
+
+async function getUserByUsername(username) {
+  if (!username) return null;
+  const key = String(username).toLowerCase();
+  const idSnap = await db.ref(`usernames/${key}`).get();
+  if (!idSnap.exists()) return null;
+  const userId = String(idSnap.val());
+  const userSnap = await db.ref(`users/${userId}`).get();
+  if (!userSnap.exists()) return { userId, username };
+  return { userId, ...userSnap.val() };
+}
+
+async function addSpot(raw) {
+  const owner = String(raw.userId);
+  const spot = {
+    ...raw,
+    userId: owner,
+    ownerId: owner,
+    createdAt: TS
+  };
   const ref = await db.ref('spots').push(spot);
   const key = ref.key;
-  // записать mapping в userSpots: owner
-  try {
-    await db.ref(`userSpots/${spot.userId}/${key}`).set('owner');
-  } catch (e) {
-    console.error('Failed to write userSpots mapping', e);
-  }
+  const updates = {
+    [`userSpots/${owner}/${key}`]: 'owner'
+  };
+  await db.ref().update(updates);
   return key;
 }
 
-// Получить все споты, которые доступны пользователю: свои + sharedWith
+async function spotBelongsToUser(spotId, userId) {
+  const snap = await db.ref(`userSpots/${String(userId)}/${spotId}`).get();
+  return snap.exists() && snap.val() === 'owner';
+}
+
 async function getSpots(userId = null) {
-  const snapshot = await db.ref('spots').get();
-  if (!snapshot.exists()) return [];
-
-  const allSpotsObj = snapshot.val(); // { spotId: spot }
-  const allSpots = Object.entries(allSpotsObj).map(([id, spot]) => ({ id, ...spot }));
-
-  if (!userId) return allSpots;
-
-  // Фильтруем: либо владелец, либо sharedWith включает userId
-  const res = allSpots.filter(s => {
-    if (s.userId === userId) return true;
-    if (s.sharedWith && typeof s.sharedWith === 'object') {
-      // sharedWith stored as { "<userId>": { timestamp } }
-      return Object.prototype.hasOwnProperty.call(s.sharedWith, String(userId));
-    }
-    return false;
-  });
-  return res;
+  if (!userId) {
+    const snapshot = await db.ref('spots').limitToLast(500).get();
+    if (!snapshot.exists()) return [];
+    return Object.entries(snapshot.val()).map(([id, spot]) => ({ id, ...spot }));
+  }
+  const mapSnap = await db.ref(`userSpots/${String(userId)}`).get();
+  if (!mapSnap.exists()) return [];
+  const ids = Object.keys(mapSnap.val());
+  const snaps = await Promise.all(ids.map(id => db.ref(`spots/${id}`).get()));
+  return snaps.filter(s => s.exists()).map(s => ({ id: s.key, ...s.val() }));
 }
 
-// ✅ Получить ВСЕ споты без фильтрации
-async function getAllSpots() {
-  const snapshot = await db.ref('spots').get();
-  if (!snapshot.exists()) return {};
-  return snapshot.val();
-}
-
-// Создать шеринг: добавить в spots/{spotId}/sharedWith/{targetUserId} и в userSpots/{targetUserId}/{spotId}='shared'
 async function shareSpot(spotId, fromUserId, targetUserId) {
   const spotRef = db.ref(`spots/${spotId}`);
   const snap = await spotRef.get();
@@ -62,58 +94,62 @@ async function shareSpot(spotId, fromUserId, targetUserId) {
   const spot = snap.val();
   const ownerId = String(spot.ownerId || spot.userId);
   const fromId = String(fromUserId);
+  const toId = String(targetUserId);
 
-  const isOwner = fromId === ownerId;
-  const isEditor =
-    spot.sharedWith &&
-    spot.sharedWith[fromId] &&
-    spot.sharedWith[fromId].role === 'editor';
-
-  // ✅ Разрешаем делиться owner'у и editor'у
-  if (!isOwner && !isEditor) {
-    throw new Error('You have no rights to share this spot');
-  }  
+  if (toId === ownerId) return true;
+  const allowed = fromId === ownerId || (spot.sharedWith?.[fromId]?.role === 'editor');
+  if (!allowed) throw new Error('You have no rights to share this spot');
 
   const updates = {};
-  updates[`spots/${spotId}/sharedWith/${targetUserId}`] = {
+  updates[`spots/${spotId}/sharedWith/${toId}`] = spot.sharedWith?.[toId] || {
     timestamp: Date.now(),
-    sharedBy: fromUserId,
-    role: 'shared' // базовая роль
+    sharedBy: fromId,
+    role: 'shared'
   };
-  updates[`userSpots/${targetUserId}/${spotId}`] = 'shared';
+  updates[`userSpots/${toId}/${spotId}`] = 'shared';
 
   await db.ref().update(updates);
   return true;
 }
 
-// Проверить, sharedWith содержит user
-async function isSharedWith(spotId, userId) {
-  const snap = await db.ref(`spots/${spotId}/sharedWith/${userId}`).get();
-  return snap.exists();
+async function createPendingInvite(username, spotId, ownerId) {
+  const uname = String(username).toLowerCase();
+  const data = {
+    spotId,
+    ownerId: String(ownerId),
+    targetUsername: uname,
+    createdAt: Date.now()
+  };
+  await db.ref(`pendingInvites/byUsername/${uname}/${spotId}`).set(data);
+  return true;
 }
 
-// Удалить шеринг (для отмены)
-async function unshareSpot(spotId, fromUserId, targetUserId) {
-  const spotRef = db.ref(`spots/${spotId}`);
-  const snap = await spotRef.get();
-  if (!snap.exists()) throw new Error('Spot not found');
-  const spot = snap.val();
-  if (String(spot.userId) !== String(fromUserId) && String(spot.ownerId || spot.userId) !== String(fromUserId)) {
-    throw new Error('Only owner can unshare this spot');
+async function claimPendingInvitesForUser(username, userId) {
+  const uname = String(username).toLowerCase();
+  const snap = await db.ref(`pendingInvites/byUsername/${uname}`).get();
+  if (!snap.exists()) return 0;
+  const invites = snap.val();
+  let count = 0;
+  for (const [spotId, inv] of Object.entries(invites)) {
+    try {
+      await shareSpot(spotId, inv.ownerId, userId);
+      await db.ref(`pendingInvites/byUsername/${uname}/${spotId}`).remove();
+      count++;
+    } catch (e) {
+      console.error('claim invite failed', spotId, e);
+    }
   }
-  const updates = {};
-  updates[`spots/${spotId}/sharedWith/${targetUserId}`] = null;
-  updates[`userSpots/${targetUserId}/${spotId}`] = null;
-  await db.ref().update(updates);
-  return true;
+  return count;
 }
 
 module.exports = {
+  db,
+  registerUser,
+  getUserByUsername,
+  spotBelongsToUser,
   addSpot,
   getSpots,
-  getAllSpots,
-  db,
   shareSpot,
-  isSharedWith,
-  unshareSpot
+  createPendingInvite,
+  claimPendingInvitesForUser
 };

@@ -1,36 +1,40 @@
-// services/geocoding.js
-const fetch = require('node-fetch');
+﻿// services/geocoding.js
+const BOT_UA = process.env.BOT_UA || 'MyPhotoSpotsBot/1.0';
+const CONTACT_EMAIL = process.env.CONTACT_EMAIL || '';
 
-/**
- * Получает название региона или города по координатам через Nominatim
- * @param {number} lat - широта
- * @param {number} lon - долгота
- * @returns {Promise<{region: string|null, city: string|null}>}
- */
 async function getRegionFromCoords(lat, lon) {
   try {
-    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10&addressdetails=1`;
+    const url = new URL('https://nominatim.openstreetmap.org/reverse');
+    url.searchParams.set('lat', String(lat));
+    url.searchParams.set('lon', String(lon));
+    url.searchParams.set('format', 'json');
+    url.searchParams.set('zoom', '10');
+    url.searchParams.set('addressdetails', '1');
+    if (CONTACT_EMAIL) url.searchParams.set('email', CONTACT_EMAIL);
 
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'MyPhotoSpotsBot/1.0 (https://t.me/your_bot_name)'
+    const headers = { 'User-Agent': `${BOT_UA} (+https://t.me/${process.env.BOT_USERNAME || 'your_bot'})` };
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const res = await fetch(url, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        const a = data.address || {};
+        return {
+          region: a.state || a.region || a.county || null,
+          city: a.city || a.town || a.village || null
+        };
       }
-    });
-
-    if (!response.ok) throw new Error(`Nominatim error: ${response.status}`);
-
-    const data = await response.json();
-    const address = data.address || {};
-
-    const region = address.state || address.region || address.county || null;
-    const city = address.city || address.town || address.village || null;
-
-    return { region, city };
-
+      if (res.status === 429 || res.status >= 500) {
+        await new Promise(r => setTimeout(r, 300 * attempt));
+        continue;
+      }
+      console.error('Nominatim error:', res.status, await res.text());
+      break;
+    }
   } catch (error) {
     console.error('Ошибка при геокодировании через Nominatim:', error);
-    return { region: null, city: null };
   }
+  return { region: null, city: null };
 }
 
 module.exports = { getRegionFromCoords };

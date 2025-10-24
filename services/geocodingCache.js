@@ -1,27 +1,25 @@
-const { db } = require('./firebase');
+﻿const { db } = require('./firebase');
 const { getRegionFromCoords } = require('./geocoding');
 
-async function getRegionWithCache(lat, lon) {
-  // 🔹 Очищаем ключ: заменяем точки на подчеркивания
-  const latKey = lat.toFixed(4).replace(/\./g, '_');
-  const lonKey = lon.toFixed(4).replace(/\./g, '_');
-  const key = `${latKey}_${lonKey}`;
-  const cacheRef = db.ref(`geoCache/${key}`);
+const TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
 
-  // 1️⃣ Проверяем кэш
-  const snapshot = await cacheRef.get();
+async function getRegionWithCache(lat, lon) {
+  const latKey = Number(lat).toFixed(5).replace(/\./g, '_');
+  const lonKey = Number(lon).toFixed(5).replace(/\./g, '_');
+  const key = `${latKey}_${lonKey}`;
+  const ref = db.ref(`geoCache/${key}`);
+  const now = Date.now();
+
+  const snapshot = await ref.get();
   if (snapshot.exists()) {
-    console.log('✅ Извлекаем геоданные из кэша:', key);
-    return snapshot.val();
+    const val = snapshot.val();
+    if (!val.cachedAt || (now - val.cachedAt) < TTL_MS) {
+      return { region: val.region || null, city: val.city || null };
+    }
   }
 
-  // 2️⃣ Если нет — обращаемся к Nominatim
   const regionData = await getRegionFromCoords(lat, lon);
-
-  // 3️⃣ Сохраняем в кэш
-  await cacheRef.set(regionData);
-  console.log('💾 Сохранили в кэш:', key);
-
+  await ref.set({ ...regionData, cachedAt: now });
   return regionData;
 }
 

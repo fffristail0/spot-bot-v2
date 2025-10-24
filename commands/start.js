@@ -1,27 +1,14 @@
-const messages = require('../config/messages');
-const { shareSpot, db } = require('../services/firebase');
-
-async function registerUser(userId, username) {
-  try {
-    await db.ref(`users/${userId}`).update({
-      username: username || null,
-      updatedAt: Date.now()
-    });
-  } catch (e) {
-    console.error("User registration error:", e);
-  }
-}
+﻿const messages = require('../config/messages');
+const { shareSpot, db, registerUser, claimPendingInvitesForUser } = require('../services/firebase');
 
 module.exports = async (ctx) => {
-  const userId = ctx.from.id;
+  const userId = String(ctx.from.id);
   const username = ctx.from.username || null;
 
-  // ✅ Регистрируем пользователя
   await registerUser(userId, username);
 
   const payload = ctx.startPayload;
 
-  // ✅ Если перешёл по ссылке расшаривания спота
   if (payload && payload.startsWith('share_spot_')) {
     const spotId = payload.replace('share_spot_', '');
 
@@ -32,13 +19,13 @@ module.exports = async (ctx) => {
       }
 
       const spot = snap.val();
-      const ownerId = spot.ownerId || spot.userId;
+      const ownerId = String(spot.ownerId || spot.userId);
 
       await shareSpot(spotId, ownerId, userId);
 
       return ctx.reply(
-        `✅ Спот *"${spot.title}"* теперь в вашей коллекции!\n\nИспользуйте /list, чтобы его увидеть.`,
-        { parse_mode: 'Markdown' }
+        `✅ Спот "${spot.title}" теперь в вашей коллекции!\n\nИспользуйте /list, чтобы его увидеть.`,
+        { parse_mode: 'HTML' }
       );
     } catch (e) {
       console.error(e);
@@ -46,6 +33,17 @@ module.exports = async (ctx) => {
     }
   }
 
-  // ✅ Обычный старт
+  try {
+    if (username) {
+      const claimed = await claimPendingInvitesForUser(username, userId);
+      if (claimed > 0) {
+        await ctx.reply(`✅ Найдено и добавлено приглашений: ${claimed}. Используйте /list, чтобы увидеть споты.`);
+        return;
+      }
+    }
+  } catch (e) {
+    console.error('claim pending invites error:', e);
+  }
+
   return ctx.reply(messages.start);
 };

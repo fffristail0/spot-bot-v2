@@ -1,5 +1,10 @@
-const addSpotWizard = require('../scenes/addSpotWizard/addSpotWizard.js');
+﻿const addSpotWizard = require('../scenes/addSpotWizard/addSpotWizard.js');
 
 module.exports = async (ctx) => {
-    ctx.scene.enter('addSpotWizard')
-}
+  try {
+    await ctx.scene.enter('addSpotWizard');
+  } catch (e) {
+    console.error('enter addSpotWizard error:', e);
+    await ctx.reply('⚠️ Не удалось запустить мастер. Попробуйте ещё раз.');
+  }
+};

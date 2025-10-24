@@ -1,4 +1,4 @@
-const messages = require('../../../config/messages');
+﻿const messages = require('../../../config/messages');
 
 async function handleTitleStep(ctx) {
   await ctx.reply(messages.addSpot.askTitle);

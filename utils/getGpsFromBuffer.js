@@ -1,13 +1,18 @@
-const exifr = require('exifr');
+﻿const exifr = require('exifr');
 
 async function getGpsFromBuffer(buffer) {
-    try {
-      const exifData = await exifr.gps(buffer);
-      if (exifData?.latitude && exifData?.longitude) {
-        return { lat: exifData.latitude, lon: exifData.longitude };
-      }
-    } catch {}
-    return null;
+  try {
+    const gps = await exifr.gps(buffer);
+    const { latitude, longitude } = gps || {};
+    if (typeof latitude === 'number' && typeof longitude === 'number' && isFinite(latitude) && isFinite(longitude)) {
+      const lat = Number(latitude.toFixed(6));
+      const lon = Number(longitude.toFixed(6));
+      return { lat, lon };
+    }
+  } catch (e) {
+    console.warn('EXIF gps parse failed:', e.message);
   }
+  return null;
+}
 
-  module.exports = {getGpsFromBuffer}
+module.exports = { getGpsFromBuffer };

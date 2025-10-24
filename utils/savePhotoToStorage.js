@@ -1,8 +1,16 @@
+﻿const { randomUUID } = require('crypto');
+const path = require('path');
 const { uploadFile } = require('../services/s3');
 
-async function savePhotoToStorage(fileName, buffer) {
-    await uploadFile(fileName, buffer);
-    return `https://storage.yandexcloud.net/${process.env.YANDEX_BUCKET}/${fileName}`;
-  }
+function buildSafeKey(originalName) {
+  const ext = path.extname(originalName || '') || '.jpg';
+  return `photos/${new Date().toISOString().slice(0,10)}/${randomUUID()}${ext}`;
+}
 
-module.exports = {savePhotoToStorage}
+async function savePhotoToStorage(originalName, data, contentType) {
+  const key = buildSafeKey(originalName);
+  const url = await uploadFile(key, data, { contentType });
+  return { url, key };
+}
+
+module.exports = { savePhotoToStorage };
