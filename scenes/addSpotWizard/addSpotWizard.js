@@ -14,12 +14,4 @@ const addSpotWizard = new Scenes.WizardScene(
   handlePhotoStep
 );
 
-addSpotWizard.enter(async (ctx) => {
-  ctx.wizard.state = {};
-});
-
-addSpotWizard.leave(async (ctx) => {
-  ctx.wizard.state = {};
-});
-
 module.exports = withCancel(addSpotWizard, messages.cancel.success);

@@ -1,4 +1,19 @@
+# deps
+node_modules/
+package-lock.json
+
+# env/secrets
 .env
 firebase-key.json
-testFirebase.js
-node_modules/
+*.pem
+*.p12
+
+# build artifacts
+package-new.zip
+*.zip
+*.log
+
+# OS/IDE
+.DS_Store
+Thumbs.db
+.vscode/
