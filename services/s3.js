@@ -21,26 +21,57 @@ function sanitizeKey(name) {
     .slice(0, 200);
 }
 
+function publicUrlForKey(key) {
+  const Bucket = process.env.YANDEX_BUCKET;
+  const Key = sanitizeKey(key);
+  return `https://storage.yandexcloud.net/${Bucket}/${Key}`;
+}
+
+// БАЗОВАЯ загрузка (как было) + поддержка Cache-Control
 async function uploadFile(key, data, opts = {}) {
   const Bucket = process.env.YANDEX_BUCKET;
   const Key = sanitizeKey(key);
   const ContentType = opts.contentType || mime.lookup(Key) || 'application/octet-stream';
+  const CacheControl = opts.cacheControl;
 
   const command = new PutObjectCommand({
     Bucket,
     Key,
     Body: data,
-    ContentType
+    ContentType,
+    ...(CacheControl ? { CacheControl } : {})
   });
   await s3.send(command);
 
   if (process.env.YANDEX_PUBLIC_BUCKET === 'true') {
-    return `https://storage.yandexcloud.net/${Bucket}/${Key}`;
+    // для публичного бакета вернём постоянный URL
+    return publicUrlForKey(Key);
   }
 
+  // приватный бакет — вернём пресайн на 10 минут
   const getCmd = new GetObjectCommand({ Bucket, Key });
   const signed = await getSignedUrl(s3, getCmd, { expiresIn: 600 });
   return signed;
+}
+
+// Публичная загрузка (для KML): ставим ACL public-read и возвращаем постоянный URL
+async function uploadPublicFile(key, data, opts = {}) {
+  const Bucket = process.env.YANDEX_BUCKET;
+  const Key = sanitizeKey(key);
+  const ContentType = opts.contentType || mime.lookup(Key) || 'application/octet-stream';
+  const CacheControl = opts.cacheControl;
+
+  const command = new PutObjectCommand({
+    Bucket,
+    Key,
+    Body: data,
+    ContentType,
+    ...(CacheControl ? { CacheControl } : {}),
+    ACL: 'public-read' // не ломает, если у бакета уже есть публичная политика
+  });
+  await s3.send(command);
+
+  return publicUrlForKey(Key);
 }
 
 async function deleteFileByKey(key) {
@@ -53,30 +84,11 @@ async function deleteFileByKey(key) {
   }
 }
 
-function publicUrlForKey(key) {
+async function getPresignedUrlForKey(key, expiresIn = 600) {
   const Bucket = process.env.YANDEX_BUCKET;
   const Key = sanitizeKey(key);
-  return `https://storage.yandexcloud.net/${Bucket}/${Key}`;
+  const cmd = new GetObjectCommand({ Bucket, Key });
+  return getSignedUrl(s3, cmd, { expiresIn });
 }
 
-// Публичная загрузка (перезаписывает объект по ключу, URL постоянный)
-async function uploadPublicFile(key, data, opts = {}) {
-  const Bucket = process.env.YANDEX_BUCKET;
-  const Key = sanitizeKey(key);
-  const ContentType = opts.contentType || mime.lookup(Key) || 'application/octet-stream';
-  const CacheControl = opts.cacheControl; // например, 'no-cache' для KML
-
-  const cmd = new PutObjectCommand({
-    Bucket,
-    Key,
-    Body: data,
-    ContentType,
-    CacheControl,
-    ACL: 'public-read' // если бакет уже публичен политикой, это не навредит
-  });
-  await s3.send(cmd);
-
-  return publicUrlForKey(Key);
-}
-
-module.exports = { uploadFile, deleteFileByKey, uploadPublicFile, publicUrlForKey };
+module.exports = { uploadFile, uploadPublicFile, deleteFileByKey, getPresignedUrlForKey, publicUrlForKey };

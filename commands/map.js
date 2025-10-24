@@ -1,6 +1,6 @@
 const messages = require('../config/messages');
 const { getSpots } = require('../services/firebase');
-const { uploadPublicFile, publicUrlForKey } = require('../services/s3');
+const { uploadFile, getPresignedUrlForKey } = require('../services/s3');
 
 function escapeXml(s = '') {
   return String(s)
@@ -64,10 +64,11 @@ module.exports = async (ctx) => {
     // Фиксированный ключ — перезаписываем и держим постоянную ссылку
     const key = `exports/${userId}/my_spots.kml`;
 
-    const url = await uploadPublicFile(key, buf, {
-      contentType: 'application/vnd.google-earth.kml+xml',
-      cacheControl: 'no-cache'
-    });
+    await uploadFile(key, Buffer.from(kml, 'utf8'), {
+        contentType: 'application/vnd.google-earth.kml+xml',
+        cacheControl: 'no-cache' // чтобы новые сборки не кешировались
+      });
+      const url = await getPresignedUrlForKey(key, 24 * 3600); // 24 часа
 
     return ctx.replyWithHTML(
       `🗺️ Файл KML сформирован. Скачайте и откройте в приложении:\n` +
