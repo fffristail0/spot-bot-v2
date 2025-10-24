@@ -46,6 +46,13 @@ async function getSpots(userId = null) {
   return res;
 }
 
+// ✅ Получить ВСЕ споты без фильтрации
+async function getAllSpots() {
+  const snapshot = await db.ref('spots').get();
+  if (!snapshot.exists()) return {};
+  return snapshot.val();
+}
+
 // Создать шеринг: добавить в spots/{spotId}/sharedWith/{targetUserId} и в userSpots/{targetUserId}/{spotId}='shared'
 async function shareSpot(spotId, fromUserId, targetUserId) {
   const spotRef = db.ref(`spots/${spotId}`);
@@ -53,12 +60,26 @@ async function shareSpot(spotId, fromUserId, targetUserId) {
   if (!snap.exists()) throw new Error('Spot not found');
 
   const spot = snap.val();
-  if (String(spot.userId) !== String(fromUserId) && String(spot.ownerId || spot.userId) !== String(fromUserId)) {
-    throw new Error('Only owner can share this spot');
-  }
+  const ownerId = String(spot.ownerId || spot.userId);
+  const fromId = String(fromUserId);
+
+  const isOwner = fromId === ownerId;
+  const isEditor =
+    spot.sharedWith &&
+    spot.sharedWith[fromId] &&
+    spot.sharedWith[fromId].role === 'editor';
+
+  // ✅ Разрешаем делиться owner'у и editor'у
+  if (!isOwner && !isEditor) {
+    throw new Error('You have no rights to share this spot');
+  }  
 
   const updates = {};
-  updates[`spots/${spotId}/sharedWith/${targetUserId}`] = { timestamp: Date.now(), sharedBy: fromUserId };
+  updates[`spots/${spotId}/sharedWith/${targetUserId}`] = {
+    timestamp: Date.now(),
+    sharedBy: fromUserId,
+    role: 'shared' // базовая роль
+  };
   updates[`userSpots/${targetUserId}/${spotId}`] = 'shared';
 
   await db.ref().update(updates);
@@ -90,6 +111,7 @@ async function unshareSpot(spotId, fromUserId, targetUserId) {
 module.exports = {
   addSpot,
   getSpots,
+  getAllSpots,
   db,
   shareSpot,
   isSharedWith,

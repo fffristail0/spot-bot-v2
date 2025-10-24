@@ -1,3 +1,4 @@
+const { Markup } = require('telegraf');
 const { getSpots } = require('../services/firebase');
 const messages = require('../config/messages');
 
@@ -23,7 +24,10 @@ module.exports = async (ctx) => {
       }
       await ctx.replyWithPhoto(spot.photoUrl, {
         caption,
-        parse_mode: 'Markdown'
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback(messages.list.share, `share:${spot.id}`)]
+        ])
       });
     }
   } catch (err) {

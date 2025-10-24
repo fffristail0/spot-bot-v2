@@ -1,15 +1,15 @@
 require('dotenv').config();
 const { Telegraf, Scenes, session } = require('telegraf');
 const addSpotWizard = require('./scenes/addSpotWizard/addSpotWizard');
+const shareWizard = require('./scenes/shareWizard/shareWizard');
 const startCommand = require('./commands/start');
 const addCommand = require('./commands/add');
 const listCommand = require('./commands/list');
-const shareCommand = require('./commands/share');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // Stage с WizardScene
-const stage = new Scenes.Stage([addSpotWizard]);
+const stage = new Scenes.Stage([addSpotWizard, shareWizard]);
 
 bot.use(session());
 bot.use(stage.middleware());
@@ -19,7 +19,10 @@ bot.use(stage.middleware());
 bot.start(startCommand);
 bot.command('add', addCommand);
 bot.command('list', listCommand);
-bot.command('share', shareCommand);
+bot.action(/^share:(.+)$/, async (ctx) => {
+    const spotId = ctx.match[1];
+    ctx.scene.enter('shareWizard', { spotId });
+  });
 
 bot.launch();
 console.log('✅ Бот запущен!');
