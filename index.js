@@ -5,6 +5,9 @@ const shareWizard = require('./scenes/shareWizard/shareWizard');
 const startCommand = require('./commands/start');
 const addCommand = require('./commands/add');
 const listCommand = require('./commands/list');
+const shareAction = require('./actions/share');
+const delAction = require('./actions/del');
+const delcAction = require('./actions/delc');
 
 if (!process.env.BOT_TOKEN) {
   console.error('ENV ERROR: BOT_TOKEN is required');
@@ -32,10 +35,10 @@ bot.catch((err, ctx) => {
 bot.start(startCommand);
 bot.command('add', addCommand);
 bot.command('list', listCommand);
-bot.action(/^share:(.+)$/, async (ctx) => {
-  const spotId = ctx.match[1];
-  return ctx.scene.enter('shareWizard', { spotId });
-});
+bot.action(/^share:(.+)$/, shareAction);
+bot.action(/^del:(.+)$/, delAction);
+bot.action(/^delc:(.+)$/, delcAction);
+bot.action('noop', (ctx) => ctx.answerCbQuery('Отменено'));
 
 bot.launch().then(() => console.log('✅ Бот запущен!'));
 process.once('SIGINT', () => bot.stop('SIGINT'));

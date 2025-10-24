@@ -1,4 +1,5 @@
 ﻿const admin = require('firebase-admin');
+const { deleteFileByKey } = require('./s3');
 require('dotenv').config();
 
 function initFirebase() {
@@ -142,6 +143,95 @@ async function claimPendingInvitesForUser(username, userId) {
   return count;
 }
 
+async function deleteSpotForUser(spotId, userId) {
+  userId = String(userId);
+  const spotRef = db.ref(`spots/${spotId}`);
+
+  let txResult = null;
+
+  // ВАЖНО: корректный вызов transaction с onComplete и applyLocally = false
+  await new Promise((resolve, reject) => {
+    spotRef.transaction((spot) => {
+      if (!spot) {
+        txResult = { notFound: true };
+        return spot;
+      }
+
+      const ownerId = String(spot.ownerId || spot.userId);
+      const sharedWith = { ...(spot.sharedWith || {}) };
+
+      // Удаляет шарящий (shared) пользователь — только из sharedWith
+      if (userId !== ownerId) {
+        if (sharedWith[userId]) {
+          delete sharedWith[userId];
+          spot.sharedWith = Object.keys(sharedWith).length ? sharedWith : null;
+        }
+        txResult = { removedFromUser: true };
+        return spot;
+      }
+
+      // Удаляет владелец
+      const sorted = Object.entries(sharedWith)
+        .sort((a, b) => (a[1]?.timestamp || 0) - (b[1]?.timestamp || 0))
+        .map(([uid]) => String(uid));
+
+      if (sorted.length === 0) {
+        // Полное удаление: зафиксируем фото и всех пользователей, у кого был спот
+        txResult = {
+          fullDelete: true,
+          photoKey: spot.photoKey || null,
+          users: [ownerId, ...Object.keys(sharedWith).map(String)]
+        };
+        return null; // удаляем узел spots/{spotId}
+      }
+
+      const nextOwner = sorted[0];
+      delete sharedWith[nextOwner];
+      spot.ownerId = nextOwner;
+      spot.sharedWith = Object.keys(sharedWith).length ? sharedWith : null;
+      txResult = { transferred: true, prevOwner: ownerId, nextOwner };
+      return spot;
+    }, (error, committed, snapshot) => {
+      if (error) return reject(error);
+      resolve({ committed, snapshot });
+    }, false);
+  });
+
+  if (!txResult) return { ok: false, reason: 'noop' };
+  if (txResult.notFound) return { ok: false, reason: 'not_found' };
+
+  if (txResult.fullDelete) {
+    // Чистим userSpots только у известных участников (не сканируем всю БД)
+    const updates = {};
+    for (const uid of new Set(txResult.users.map(String))) {
+      updates[`userSpots/${uid}/${spotId}`] = null;
+    }
+    if (Object.keys(updates).length) {
+      await db.ref().update(updates).catch(e => console.error('userSpots cleanup failed', e));
+    }
+
+    // Удаляем файл из S3
+    if (txResult.photoKey) await deleteFileByKey(txResult.photoKey).catch(() => {});
+
+    return { ok: true, action: 'deleted' };
+  }
+
+  if (txResult.transferred) {
+    await db.ref().update({
+      [`userSpots/${txResult.prevOwner}/${spotId}`]: null,
+      [`userSpots/${txResult.nextOwner}/${spotId}`]: 'owner'
+    });
+    return { ok: true, action: 'transferred', newOwner: txResult.nextOwner };
+  }
+
+  if (txResult.removedFromUser) {
+    await db.ref(`userSpots/${userId}/${spotId}`).remove().catch(() => {});
+    return { ok: true, action: 'removed_from_user' };
+  }
+
+  return { ok: false, reason: 'unknown' };
+}
+
 module.exports = {
   db,
   registerUser,
@@ -151,5 +241,6 @@ module.exports = {
   getSpots,
   shareSpot,
   createPendingInvite,
-  claimPendingInvitesForUser
+  claimPendingInvitesForUser,
+  deleteSpotForUser
 };

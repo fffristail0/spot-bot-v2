@@ -41,7 +41,10 @@ module.exports = async (ctx) => {
         caption,
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
-          [Markup.button.callback(messages.list.share, `share:${spot.id}`)]
+          [
+            Markup.button.callback(messages.list.share, `share:${spot.id}`),
+            Markup.button.callback('🗑️ Удалить', `del:${spot.id}`)
+          ]
         ])
       });
       await sleep(350);

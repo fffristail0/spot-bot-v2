@@ -1,4 +1,4 @@
-﻿const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+﻿const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const mime = require('mime-types');
 require('dotenv').config();
@@ -43,4 +43,14 @@ async function uploadFile(key, data, opts = {}) {
   return signed;
 }
 
-module.exports = { uploadFile };
+async function deleteFileByKey(key) {
+  const Bucket = process.env.YANDEX_BUCKET;
+  if (!key) return;
+  try {
+    await s3.send(new DeleteObjectCommand({ Bucket, Key: key }));
+  } catch (e) {
+    console.error('S3 delete error', key, e);
+  }
+}
+
+module.exports = { uploadFile, deleteFileByKey };
