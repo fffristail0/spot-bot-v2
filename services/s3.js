@@ -11,6 +11,7 @@ const s3 = new S3Client({
     accessKeyId: process.env.YANDEX_ACCESS_KEY,
     secretAccessKey: process.env.YANDEX_SECRET_KEY,
   },
+  maxAttempts: 3
 });
 
 function sanitizeKey(name) {
