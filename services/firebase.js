@@ -1,28 +1,42 @@
-﻿const admin = require('firebase-admin');
+﻿// services/firebase.js
+const admin = require('firebase-admin');
+const { env } = require('../config/env');
 const { deleteFileByKey } = require('./s3');
-require('dotenv').config();
 
 function initFirebase() {
   if (admin.apps.length) return;
-  const databaseURL = process.env.FIREBASE_DB_URL;
+
+  const databaseURL = env.FIREBASE.databaseURL;
   if (!databaseURL) {
     console.error('ENV ERROR: FIREBASE_DB_URL is required');
     process.exit(1);
   }
 
-  if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
-    const json = JSON.parse(Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString('utf8'));
-    admin.initializeApp({ credential: admin.credential.cert(json), databaseURL });
-  } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    admin.initializeApp({ credential: admin.credential.applicationDefault(), databaseURL });
-  } else {
+  // 1) Сервисный аккаунт через base64
+  if (env.FIREBASE.serviceAccountBase64) {
     try {
-      const serviceAccount = require('../firebase-key.json');
-      admin.initializeApp({ credential: admin.credential.cert(serviceAccount), databaseURL });
+      const json = JSON.parse(Buffer.from(env.FIREBASE.serviceAccountBase64, 'base64').toString('utf8'));
+      admin.initializeApp({ credential: admin.credential.cert(json), databaseURL });
+      return;
     } catch (e) {
-      console.error('No Firebase credentials provided. Set GOOGLE_APPLICATION_CREDENTIALS or FIREBASE_SERVICE_ACCOUNT_BASE64');
+      console.error('Invalid FIREBASE_SERVICE_ACCOUNT_BASE64:', e);
       process.exit(1);
     }
+  }
+
+  // 2) GOOGLE_APPLICATION_CREDENTIALS — стандартный путь GCP
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    admin.initializeApp({ credential: admin.credential.applicationDefault(), databaseURL });
+    return;
+  }
+
+  // 3) Локальный файл firebase-key.json — для dev
+  try {
+    const serviceAccount = require('../firebase-key.json');
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount), databaseURL });
+  } catch (e) {
+    console.error('No Firebase credentials provided. Set GOOGLE_APPLICATION_CREDENTIALS or FIREBASE_SERVICE_ACCOUNT_BASE64');
+    process.exit(1);
   }
 }
 initFirebase();
@@ -149,7 +163,6 @@ async function deleteSpotForUser(spotId, userId) {
 
   let txResult = null;
 
-  // ВАЖНО: корректный вызов transaction с onComplete и applyLocally = false
   await new Promise((resolve, reject) => {
     spotRef.transaction((spot) => {
       if (!spot) {
@@ -160,7 +173,6 @@ async function deleteSpotForUser(spotId, userId) {
       const ownerId = String(spot.ownerId || spot.userId);
       const sharedWith = { ...(spot.sharedWith || {}) };
 
-      // Удаляет шарящий (shared) пользователь — только из sharedWith
       if (userId !== ownerId) {
         if (sharedWith[userId]) {
           delete sharedWith[userId];
@@ -170,19 +182,17 @@ async function deleteSpotForUser(spotId, userId) {
         return spot;
       }
 
-      // Удаляет владелец
       const sorted = Object.entries(sharedWith)
         .sort((a, b) => (a[1]?.timestamp || 0) - (b[1]?.timestamp || 0))
         .map(([uid]) => String(uid));
 
       if (sorted.length === 0) {
-        // Полное удаление: зафиксируем фото и всех пользователей, у кого был спот
         txResult = {
           fullDelete: true,
           photoKey: spot.photoKey || null,
           users: [ownerId, ...Object.keys(sharedWith).map(String)]
         };
-        return null; // удаляем узел spots/{spotId}
+        return null;
       }
 
       const nextOwner = sorted[0];
@@ -201,7 +211,6 @@ async function deleteSpotForUser(spotId, userId) {
   if (txResult.notFound) return { ok: false, reason: 'not_found' };
 
   if (txResult.fullDelete) {
-    // Чистим userSpots только у известных участников (не сканируем всю БД)
     const updates = {};
     for (const uid of new Set(txResult.users.map(String))) {
       updates[`userSpots/${uid}/${spotId}`] = null;
@@ -210,7 +219,6 @@ async function deleteSpotForUser(spotId, userId) {
       await db.ref().update(updates).catch(e => console.error('userSpots cleanup failed', e));
     }
 
-    // Удаляем файл из S3
     if (txResult.photoKey) await deleteFileByKey(txResult.photoKey).catch(() => {});
 
     return { ok: true, action: 'deleted' };

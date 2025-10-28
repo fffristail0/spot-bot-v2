@@ -30,7 +30,10 @@ module.exports = {
         await getFileBuffer(ctx, file, { maxBytes: MAX_MB * 1024 * 1024 });
 
       // 2) GPS до очистки
-      const gps = await getGpsFromBuffer(originalBuffer).catch(() => null);
+      const gps = await getGpsFromBuffer(originalBuffer, {
+        mimeType: file?.mime_type,
+        fileName: file?.file_name
+      }).catch(() => null);
 
       // 3) Геокодинг
       const regionData = gps
@@ -40,7 +43,9 @@ module.exports = {
       // 4) Очищаем EXIF и сжимаем
       const { buffer: cleanedBuffer, contentType } = await compressAndStrip(originalBuffer, {
         maxSide: Number(process.env.PHOTO_MAX_SIDE) || 1600,
-        quality: Number(process.env.PHOTO_QUALITY) || 82
+        quality: Number(process.env.PHOTO_QUALITY) || 82,
+        mimeType: file?.mime_type,
+        fileName: file?.file_name
       });
 
       // 5) Загружаем в Storage очищенную картинку
