@@ -6,10 +6,11 @@ const startCommand = require('./commands/start');
 const addCommand = require('./commands/add');
 const listCommand = require('./commands/list');
 const mapCommand = require('./commands/map');
-const helpCommand = require('./commands/help')
+const helpCommand = require('./commands/help');
 const shareAction = require('./actions/share');
 const delAction = require('./actions/del');
 const delcAction = require('./actions/delc');
+const noopAction = require('./actions/noop'); // NEW
 
 if (!process.env.BOT_TOKEN) {
   console.error('ENV ERROR: BOT_TOKEN is required');
@@ -17,7 +18,6 @@ if (!process.env.BOT_TOKEN) {
 }
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-
 const stage = new Scenes.Stage([addSpotWizard, shareWizard]);
 
 bot.use(session());
@@ -44,7 +44,7 @@ bot.command('help', helpCommand);
 bot.action(/^share:(.+)$/, shareAction);
 bot.action(/^del:(.+)$/, delAction);
 bot.action(/^delc:(.+)$/, delcAction);
-bot.action('noop', (ctx) => ctx.answerCbQuery('Отменено'));
+bot.action(/^noop$/, noopAction); // UPDATED
 
 bot.launch().then(() => console.log('✅ Бот запущен!'));
 process.once('SIGINT', () => bot.stop('SIGINT'));

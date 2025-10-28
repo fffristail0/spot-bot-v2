@@ -12,7 +12,7 @@ const shareWizard = new Scenes.WizardScene(
   async (ctx) => {
     const username = ctx.message?.text?.replace('@', '').trim();
     if (!username) {
-      await ctx.reply('❗ Укажите username текстом (например, @user).');
+      await ctx.reply(messages.shareSpot.invalidUsername);
       return;
     }
     const spotId = ctx.wizard.state.spotId;
@@ -21,7 +21,7 @@ const shareWizard = new Scenes.WizardScene(
     try {
       const owns = await spotBelongsToUser(spotId, fromUserId);
       if (!owns) {
-        await ctx.reply('❌ Вы не можете делиться этим спотом.');
+        await ctx.reply(messages.shareSpot.notAllowed);
         return ctx.scene.leave();
       }
     } catch (e) {
@@ -32,19 +32,16 @@ const shareWizard = new Scenes.WizardScene(
       const user = await getUserByUsername(username);
       if (user?.userId) {
         await shareSpot(spotId, fromUserId, user.userId);
-        await ctx.reply(`✅ Спот успешно расшарен с @${user.username || username}`);
+        await ctx.reply(messages.shareSpot.sharedOk(user.username || username));
         return ctx.scene.leave();
       }
 
       await createPendingInvite(username, spotId, fromUserId);
-      await ctx.reply(
-        `ℹ️ Пользователь @${username} ещё не запускал бота.\n` +
-        `Создано приглашение — как только он зайдёт, спот автоматически добавится в его коллекцию.`
-      );
+      await ctx.reply(messages.shareSpot.invited(username));
       return ctx.scene.leave();
     } catch (e) {
       console.error('Share wizard error:', e);
-      await ctx.reply('⚠️ Не удалось расшарить спот. Попробуйте позже.');
+      await ctx.reply(messages.shareSpot.error);
       return ctx.scene.leave();
     }
   }
