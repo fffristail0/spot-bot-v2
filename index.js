@@ -4,18 +4,26 @@ const { Agent, setGlobalDispatcher } = require('undici');
 const { env, assertRequired } = require('./config/env');
 const { createLogger } = require('./utils/logger');
 
+// Сцены
 const addSpotWizard = require('./scenes/addSpotWizard/addSpotWizard');
 const shareWizard = require('./scenes/shareWizard/shareWizard');
+const filterWizard = require('./scenes/filterWizard/filterWizard');
+
+// Команды
 const startCommand = require('./commands/start');
 const addCommand = require('./commands/add');
 const listCommand = require('./commands/list');
 const mapCommand = require('./commands/map');
 const helpCommand = require('./commands/help');
+
+// Экшены
 const shareAction = require('./actions/share');
 const delAction = require('./actions/del');
 const delcAction = require('./actions/delc');
 const noopAction = require('./actions/noop');
 const cb = require('./utils/callback');
+const listPageAction = require('./actions/listPage');
+const filtersAction = require('./actions/filters');
 
 assertRequired();
 
@@ -29,7 +37,7 @@ setGlobalDispatcher(new Agent({
 const log = createLogger('bot', env.BOT.logLevel);
 const bot = new Telegraf(env.BOT.token);
 
-const stage = new Scenes.Stage([addSpotWizard, shareWizard]);
+const stage = new Scenes.Stage([addSpotWizard, shareWizard, filterWizard]);
 bot.use(session());
 bot.use(stage.middleware());
 
@@ -57,6 +65,8 @@ bot.action(cb.regex('share'), shareAction);
 bot.action(cb.regex('del'), delAction);
 bot.action(cb.regex('delc'), delcAction);
 bot.action(/^noop$/, noopAction);
+bot.action(cb.regex('plist'), listPageAction);
+bot.action(cb.regex('filters'), filtersAction);
 
 bot.launch().then(() => log.info('✅ Бот запущен!'));
 process.once('SIGINT', () => bot.stop('SIGINT'));

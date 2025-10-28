@@ -1,5 +1,4 @@
 // utils/callback.js
-// Единый формат: x:<action>:<payload>
 const PREFIX = 'x';
 
 function make(action, payload) {
@@ -10,9 +9,11 @@ function regex(action) {
 }
 function parse(data) {
   try {
-    const [p, action, payload] = String(data || '').split(':');
-    if (p !== PREFIX || !action) return null;
-    return { action, payload: payload ?? '' };
+    const parts = String(data || '').split(':');
+    if (parts[0] !== PREFIX || !parts[1]) return null;
+    const action = parts[1];
+    const payload = parts.slice(2).join(':'); // берём всё после второго двоеточия
+    return { action, payload };
   } catch (_) {
     return null;
   }

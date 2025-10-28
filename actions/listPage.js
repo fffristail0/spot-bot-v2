@@ -1,4 +1,4 @@
-﻿// commands/list.js
+// actions/listPage.js
 const messages = require('../config/messages');
 const { buildCaption, buildKeyboard } = require('../utils/spotPresenter');
 const { find, summarizeFilter, defaultFilter } = require('../services/filter');
@@ -9,7 +9,6 @@ const { getPresignedUrlForKey, publicUrlForKey } = require('../services/s3');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function resolvePhotoUrl(spot) {
-  // Публичный бакет: постоянный URL
   if (env.S3.publicBucket) {
     if (spot.photoUrl) return spot.photoUrl;
     if (spot.photoKey) {
@@ -21,8 +20,6 @@ async function resolvePhotoUrl(spot) {
     }
     return spot.photoUrl || null;
   }
-
-  // Приватный бакет: пресайн
   if (spot.photoKey) {
     try {
       return await getPresignedUrlForKey(spot.photoKey, 3600);
@@ -70,52 +67,74 @@ function renderFooterKeyboard(res) {
 
 module.exports = async (ctx) => {
   try {
+    await ctx.answerCbQuery().catch(() => {});
+    const payload = ctx.match?.[1];
+    const requestedOffset = Math.max(0, Number(payload) || 0);
     const userId = String(ctx.from.id);
-    const res = await find(userId, { offset: 0, limit: env.PAGINATION.pageSize });
 
-    // Случай: нет результатов по фильтру, но споты в принципе есть
-    if (res.total === 0 && res.baseTotal > 0) {
+    // Блокировка от дабл-тапа
+    const view = ctx.session.listView || {};
+    if (view.loading) {
+      return ctx.answerCbQuery(messages?.actions?.general?.cancelled || 'Подождите…').catch(() => {});
+    }
+    ctx.session.listView = { ...view, loading: true };
+
+    // Пытаемся показать статус "Загружаю…"
+    const loadingText = messages?.list?.loading || 'Загружаю…';
+    const oldFooterId = view.footerMsgId || ctx.callbackQuery?.message?.message_id;
+    if (oldFooterId) {
+      try {
+        await ctx.telegram.editMessageText(ctx.chat.id, oldFooterId, undefined, loadingText);
+      } catch (_) {}
+    }
+
+    let res = await find(userId, { offset: requestedOffset, limit: env.PAGINATION.pageSize });
+    const newSignature = JSON.stringify(res.filter || {});
+    const sigChanged = view.filterSignature && view.filterSignature !== newSignature;
+    if (sigChanged && requestedOffset !== 0) {
+      res = await find(userId, { offset: 0, limit: env.PAGINATION.pageSize });
+    }
+
+    if (res.total === 0) {
       const nothingText = (messages?.filters?.nothing || 'Ничего не найдено по текущим фильтрам.');
       const footerText = `${nothingText}\n\n${renderFooterText(res)}`;
       const footerKeyboard = renderFooterKeyboard(res);
-      const footerMsg = await ctx.reply(footerText, footerKeyboard ? { reply_markup: footerKeyboard } : undefined);
 
-      // Обновляем только футер, не трогаем прошлый контент
+      if (oldFooterId) {
+        try {
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            oldFooterId,
+            undefined,
+            footerText,
+            footerKeyboard ? { reply_markup: footerKeyboard } : undefined
+          );
+        } catch (_) {
+          await ctx.reply(footerText, footerKeyboard ? { reply_markup: footerKeyboard } : undefined);
+        }
+      } else {
+        await ctx.reply(footerText, footerKeyboard ? { reply_markup: footerKeyboard } : undefined);
+      }
+
       ctx.session.listView = {
         ...(ctx.session.listView || {}),
         offset: 0,
         total: 0,
-        pageSize: env.PAGINATION.pageSize,
-        filterSignature: JSON.stringify(res.filter || {}),
-        footerMsgId: footerMsg.message_id,
+        filterSignature: newSignature,
         loading: false
       };
       return;
     }
 
-    if (res.total === 0 && res.baseTotal === 0) {
-      // у пользователя вообще нет спотов — чистим старое состояние
-      if (ctx.session?.listView?.itemMsgIds && env.PAGINATION.cleanPaging) {
-        for (const mid of ctx.session.listView.itemMsgIds) {
-          try { await ctx.deleteMessage(mid); } catch (_) {}
-        }
-        try { if (ctx.session.listView.footerMsgId) await ctx.deleteMessage(ctx.session.listView.footerMsgId); } catch (_) {}
-      }
-      ctx.session.listView = null;
-      return ctx.reply(messages?.list?.empty || 'У вас пока нет добавленных спотов.');
-    }
-
-    // Есть результаты — при желании чистим предыдущую страницу
-    if (env.PAGINATION.cleanPaging && ctx.session?.listView?.itemMsgIds?.length) {
-      for (const mid of ctx.session.listView.itemMsgIds) {
+    // Удаляем предыдущие элементы (оставляем футер до отправки нового)
+    if (env.PAGINATION.cleanPaging && view.itemMsgIds?.length) {
+      for (const mid of view.itemMsgIds) {
         try { await ctx.deleteMessage(mid); } catch (_) {}
       }
-      if (ctx.session.listView.footerMsgId) {
-        try { await ctx.deleteMessage(ctx.session.listView.footerMsgId); } catch (_) {}
-      }
     }
 
-    const itemMsgIds = [];
+    // Отправляем новую страницу
+    const newItemMsgIds = [];
     for (const spot of res.items) {
       const caption = buildCaption(spot, messages);
       const keyboard = buildKeyboard(spot.id, messages);
@@ -123,43 +142,49 @@ module.exports = async (ctx) => {
       try {
         if (spot.tgFileId) {
           const sent = await ctx.replyWithPhoto(spot.tgFileId, { caption, parse_mode: 'HTML', ...keyboard });
-          itemMsgIds.push(sent.message_id);
+          newItemMsgIds.push(sent.message_id);
         } else {
           const photoUrl = await resolvePhotoUrl(spot);
           if (!photoUrl) {
             const sent = await ctx.reply(caption, { parse_mode: 'HTML', ...keyboard });
-            itemMsgIds.push(sent.message_id);
+            newItemMsgIds.push(sent.message_id);
           } else {
             const sent = await ctx.replyWithPhoto({ url: photoUrl }, { caption, parse_mode: 'HTML', ...keyboard });
-            itemMsgIds.push(sent.message_id);
+            newItemMsgIds.push(sent.message_id);
           }
         }
       } catch (e) {
         console.error('replyWithPhoto failed for', spot.id, e);
         const sent = await ctx.reply(caption, { parse_mode: 'HTML', ...keyboard });
-        itemMsgIds.push(sent.message_id);
+        newItemMsgIds.push(sent.message_id);
       }
 
       await sleep(300);
     }
 
-    // Футер после контента
+    // Отправляем новый футер
     const footerText = renderFooterText(res);
     const footerKeyboard = renderFooterKeyboard(res);
-    const footerMsg = await ctx.reply(footerText, footerKeyboard ? { reply_markup: footerKeyboard } : undefined);
+    const newFooter = await ctx.reply(footerText, footerKeyboard ? { reply_markup: footerKeyboard } : undefined);
 
-    // Сохраняем состояние страницы
+    // Удаляем старый футер, если нужно
+    if (env.PAGINATION.cleanPaging && view.footerMsgId) {
+      try { await ctx.deleteMessage(view.footerMsgId); } catch (_) {}
+    }
+
+    // Сохраняем состояние
     ctx.session.listView = {
       offset: res.offset,
       total: res.total,
       pageSize: env.PAGINATION.pageSize,
-      filterSignature: JSON.stringify(res.filter || {}),
-      itemMsgIds,
-      footerMsgId: footerMsg.message_id,
+      filterSignature: newSignature,
+      itemMsgIds: newItemMsgIds,
+      footerMsgId: newFooter.message_id,
       loading: false
     };
-  } catch (err) {
-    console.error('list command error:', err);
-    return ctx.reply(messages?.list?.error || 'Произошла ошибка при получении ваших спотов.');
+  } catch (e) {
+    console.error('list page action error:', e);
+    ctx.session.listView = { ...(ctx.session.listView || {}), loading: false };
+    await ctx.reply(messages?.list?.error || 'Произошла ошибка при получении ваших спотов.');
   }
 };

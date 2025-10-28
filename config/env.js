@@ -47,6 +47,11 @@ const env = {
   NOMINATIM: {
     botUA: process.env.BOT_UA || 'MyPhotoSpotsBot/1.0',
     contactEmail: process.env.CONTACT_EMAIL || ''
+  },
+
+  PAGINATION: {
+    pageSize: toInt(process.env.LIST_PAGE_SIZE, 10),
+    cleanPaging: toBool(process.env.LIST_CLEAN_PAGING)
   }
 };
 
