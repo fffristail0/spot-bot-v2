@@ -1,6 +1,5 @@
 ﻿// services/geocoding.js
-const BOT_UA = process.env.BOT_UA || 'MyPhotoSpotsBot/1.0';
-const CONTACT_EMAIL = process.env.CONTACT_EMAIL || '';
+const { env } = require('../config/env');
 
 async function getRegionFromCoords(lat, lon) {
   try {
@@ -10,9 +9,9 @@ async function getRegionFromCoords(lat, lon) {
     url.searchParams.set('format', 'json');
     url.searchParams.set('zoom', '10');
     url.searchParams.set('addressdetails', '1');
-    if (CONTACT_EMAIL) url.searchParams.set('email', CONTACT_EMAIL);
+    if (env.NOMINATIM.contactEmail) url.searchParams.set('email', env.NOMINATIM.contactEmail);
 
-    const headers = { 'User-Agent': `${BOT_UA} (+https://t.me/${process.env.BOT_USERNAME || 'your_bot'})` };
+    const headers = { 'User-Agent': `${env.NOMINATIM.botUA} (+https://t.me/${env.BOT.username || 'your_bot'})` };
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       const res = await fetch(url, { headers });

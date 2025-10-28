@@ -1,5 +1,6 @@
 // utils/spotPresenter.js
 const { Markup } = require('telegraf');
+const cb = require('./callback');
 
 function escapeHtml(s = '') {
   return String(s)
@@ -31,8 +32,8 @@ function buildCaption(spotLike, messages) {
 function buildKeyboard(spotId, messages) {
   return Markup.inlineKeyboard([
     [
-      Markup.button.callback(messages.list.share, `share:${spotId}`),
-      Markup.button.callback(messages.list.delete, `del:${spotId}`)
+      Markup.button.callback(messages.list.share, cb.make('share', spotId)),
+      Markup.button.callback(messages.list.delete, cb.make('del', spotId))
     ]
   ]);
 }

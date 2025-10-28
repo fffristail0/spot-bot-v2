@@ -1,5 +1,9 @@
 ﻿require('dotenv').config();
 const { Telegraf, Scenes, session } = require('telegraf');
+const { Agent, setGlobalDispatcher } = require('undici');
+const { env, assertRequired } = require('./config/env');
+const { createLogger } = require('./utils/logger');
+
 const addSpotWizard = require('./scenes/addSpotWizard/addSpotWizard');
 const shareWizard = require('./scenes/shareWizard/shareWizard');
 const startCommand = require('./commands/start');
@@ -10,16 +14,22 @@ const helpCommand = require('./commands/help');
 const shareAction = require('./actions/share');
 const delAction = require('./actions/del');
 const delcAction = require('./actions/delc');
-const noopAction = require('./actions/noop'); // NEW
+const noopAction = require('./actions/noop');
+const cb = require('./utils/callback');
 
-if (!process.env.BOT_TOKEN) {
-  console.error('ENV ERROR: BOT_TOKEN is required');
-  process.exit(1);
-}
+assertRequired();
 
-const bot = new Telegraf(process.env.BOT_TOKEN);
+// Undici keep-alive для стабильного fetch
+setGlobalDispatcher(new Agent({
+  keepAliveTimeout: 10_000,
+  keepAliveMaxTimeout: 10_000,
+  connections: 100
+}));
+
+const log = createLogger('bot', env.BOT.logLevel);
+const bot = new Telegraf(env.BOT.token);
+
 const stage = new Scenes.Stage([addSpotWizard, shareWizard]);
-
 bot.use(session());
 bot.use(stage.middleware());
 
@@ -32,7 +42,7 @@ bot.telegram.setMyCommands([
 ]);
 
 bot.catch((err, ctx) => {
-  console.error('Bot error:', err);
+  log.error('Bot error:', err);
   if (ctx?.reply) ctx.reply('⚠️ Произошла ошибка, попробуйте ещё раз.');
 });
 
@@ -41,11 +51,13 @@ bot.command('add', addCommand);
 bot.command('list', listCommand);
 bot.command('map', mapCommand);
 bot.command('help', helpCommand);
-bot.action(/^share:(.+)$/, shareAction);
-bot.action(/^del:(.+)$/, delAction);
-bot.action(/^delc:(.+)$/, delcAction);
-bot.action(/^noop$/, noopAction); // UPDATED
 
-bot.launch().then(() => console.log('✅ Бот запущен!'));
+// Единый формат callback_data
+bot.action(cb.regex('share'), shareAction);
+bot.action(cb.regex('del'), delAction);
+bot.action(cb.regex('delc'), delcAction);
+bot.action(/^noop$/, noopAction);
+
+bot.launch().then(() => log.info('✅ Бот запущен!'));
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));

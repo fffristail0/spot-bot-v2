@@ -1,6 +1,7 @@
 // actions/del.js
 const { Markup } = require('telegraf');
 const messages = require('../config/messages');
+const cb = require('../utils/callback');
 
 module.exports = async (ctx) => {
   try {
@@ -10,7 +11,7 @@ module.exports = async (ctx) => {
 
     const kb = Markup.inlineKeyboard([
       [
-        Markup.button.callback(messages.actions.delete.yes, `delc:${id}`),
+        Markup.button.callback(messages.actions.delete.yes, cb.make('delc', id)),
         Markup.button.callback(messages.actions.delete.no, 'noop')
       ]
     ]);
