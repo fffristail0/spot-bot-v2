@@ -59,9 +59,35 @@ function kbSkip() {
   return Markup.inlineKeyboard([[Markup.button.callback(skip, cb.make('fw', 'text:skip'))]]);
 }
 
+// Универсальный рендер: редактирует предыдущее «мастер»-сообщение сцены или создаёт новое
+async function renderStep(ctx, text, keyboard) {
+  const chatId = ctx.chat.id;
+  const msgId = ctx.wizard.state.msgId;
+  const replyMarkup = keyboard?.reply_markup || keyboard; // поддержка Markup.inlineKeyboard
+  try {
+    if (msgId) {
+      await ctx.telegram.editMessageText(chatId, msgId, undefined, text, replyMarkup ? { reply_markup: replyMarkup } : undefined);
+      return msgId;
+    }
+  } catch (_) {
+    // если не удалось отредактировать (удалено/старое/иное) — отправим новое
+  }
+  const sent = await ctx.reply(text, replyMarkup ? { reply_markup: replyMarkup } : undefined);
+  ctx.wizard.state.msgId = sent.message_id;
+  return sent.message_id;
+}
+
+async function deleteWizardMessage(ctx) {
+  const msgId = ctx.wizard.state.msgId;
+  if (!msgId) return;
+  try { await ctx.deleteMessage(msgId); } catch (_) {}
+  ctx.wizard.state.msgId = undefined;
+}
+
 const filterWizard = new Scenes.WizardScene(
   'filterWizard',
-  // Step 0: приветствие + текущие фильтры + старт
+
+  // Step 0: старт — показываем выбор владения
   async (ctx) => {
     if (ctx.message?.text === '/cancel') {
       await ctx.reply(t('cancel.success', '🚪 Вы вышли из текущего режима.'));
@@ -75,13 +101,14 @@ const filterWizard = new Scenes.WizardScene(
     }
     const title = t('filters.title', 'Настройка фильтра');
     const own = t('filters.ownership', 'Какие споты показывать?');
-    await ctx.reply(`${title}\n\n${own}`, kbOwnership());
+    await renderStep(ctx, `${title}\n\n${own}`, kbOwnership());
     return ctx.wizard.next();
   },
 
   // Step 1: ownership -> gps
   async (ctx) => {
     if (ctx.message?.text === '/cancel') {
+      await deleteWizardMessage(ctx);
       await ctx.reply(t('cancel.success', '🚪 Вы вышли из текущего режима.'));
       return ctx.scene.leave();
     }
@@ -93,7 +120,7 @@ const filterWizard = new Scenes.WizardScene(
           ctx.wizard.state.filter.ownership = val;
           await ctx.answerCbQuery().catch(() => {});
           const gps = t('filters.hasGps', 'Фильтр по координатам');
-          await ctx.reply(gps, kbGps());
+          await renderStep(ctx, gps, kbGps());
           return ctx.wizard.next();
         }
       }
@@ -103,6 +130,7 @@ const filterWizard = new Scenes.WizardScene(
   // Step 2: gps -> period
   async (ctx) => {
     if (ctx.message?.text === '/cancel') {
+      await deleteWizardMessage(ctx);
       await ctx.reply(t('cancel.success', '🚪 Вы вышли из текущего режима.'));
       return ctx.scene.leave();
     }
@@ -114,7 +142,7 @@ const filterWizard = new Scenes.WizardScene(
           ctx.wizard.state.filter.hasGps = val;
           await ctx.answerCbQuery().catch(() => {});
           const per = t('filters.period', 'За какой период?');
-          await ctx.reply(per, kbPeriod());
+          await renderStep(ctx, per, kbPeriod());
           return ctx.wizard.next();
         }
       }
@@ -124,6 +152,7 @@ const filterWizard = new Scenes.WizardScene(
   // Step 3: period -> text
   async (ctx) => {
     if (ctx.message?.text === '/cancel') {
+      await deleteWizardMessage(ctx);
       await ctx.reply(t('cancel.success', '🚪 Вы вышли из текущего режима.'));
       return ctx.scene.leave();
     }
@@ -136,7 +165,7 @@ const filterWizard = new Scenes.WizardScene(
           ctx.wizard.state.filter.periodDays = days;
           await ctx.answerCbQuery().catch(() => {});
           const textQ = t('filters.text', 'Введите поисковую строку или нажмите «Пропустить».');
-          await ctx.reply(textQ, kbSkip());
+          await renderStep(ctx, textQ, kbSkip());
           return ctx.wizard.next();
         }
       }
@@ -146,11 +175,12 @@ const filterWizard = new Scenes.WizardScene(
   // Step 4: text -> save
   async (ctx) => {
     if (ctx.message?.text === '/cancel') {
+      await deleteWizardMessage(ctx);
       await ctx.reply(t('cancel.success', '🚪 Вы вышли из текущего режима.'));
       return ctx.scene.leave();
     }
 
-    // обрабатываем кнопку "Пропустить"
+    // обработка "Пропустить"
     if (ctx.callbackQuery?.data) {
       const parsed = cb.parse(ctx.callbackQuery.data);
       if (parsed?.action === 'fw' && parsed.payload === 'text:skip') {
@@ -160,17 +190,22 @@ const filterWizard = new Scenes.WizardScene(
         return; // ждём корректного действия
       }
     }
-    // или текстовое сообщение
+
+    // или текстовое сообщение пользователя
     if (ctx.message?.text && ctx.message.text !== '/cancel') {
       const text = String(ctx.message.text || '').trim();
       ctx.wizard.state.filter.text = text || null;
     }
 
-    // Сохраняем
+    // Сохраняем и аккуратно завершаем сцену
     const f = ctx.wizard.state.filter || defaultFilter();
+    try {
+      await renderStep(ctx, t('filters.saved', '✅ Фильтр сохранён. Показаны свежие результаты.'));
+    } catch (_) {}
     await saveUserFilter(String(ctx.from.id), f).catch(() => {});
-    const saved = t('filters.saved', '✅ Фильтр сохранён. Показаны свежие результаты.');
-    await ctx.reply(saved);
+
+    // Удаляем мастер-сообщение сцены, чтобы не оставлять «хвост»
+    await deleteWizardMessage(ctx);
 
     await ctx.scene.leave();
     // Показываем первую страницу листинга по новым фильтрам
